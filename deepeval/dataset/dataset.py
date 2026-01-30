@@ -159,6 +159,10 @@ class EvaluationDataset:
 
         return self._llm_test_cases
 
+    @property
+    def alias(self):
+        return self._alias
+
     @test_cases.setter
     def test_cases(
         self,
