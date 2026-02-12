@@ -37,6 +37,7 @@ from deepeval.models import (
     KimiModel,
     GrokModel,
     DeepSeekModel,
+    OpenRouterModel,
 )
 from deepeval.models.llms.constants import (
     OPENAI_MODELS_DATA,
@@ -656,6 +657,7 @@ def is_native_model(
         or isinstance(model, KimiModel)
         or isinstance(model, GrokModel)
         or isinstance(model, DeepSeekModel)
+        or isinstance(model, OpenRouterModel)
     ):
         return True
     else:
