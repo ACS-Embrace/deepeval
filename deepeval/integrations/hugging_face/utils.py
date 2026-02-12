@@ -1,7 +1,7 @@
 from deepeval.test_case import LLMTestCase
 from deepeval.dataset import EvaluationDataset
 from deepeval.dataset.utils import convert_goldens_to_test_cases
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 
 def get_column_order(scores: Dict) -> List[str]:
@@ -22,7 +22,7 @@ def get_column_order(scores: Dict) -> List[str]:
 def generate_test_cases(
     model,
     tokenizer,
-    tokenizer_args: Dict,
+    tokenizer_args: Optional[Dict],
     evaluation_dataset: EvaluationDataset,
 ) -> List[LLMTestCase]:
     """
@@ -37,16 +37,26 @@ def generate_test_cases(
     Returns:
         List[LLMTestCase]: List of generated test cases.
     """
+
+    tokenizer_args = tokenizer_args or {}
+
     goldens = evaluation_dataset.goldens
     for golden in goldens:
         prompt = f"""{'CONTEXT: ' + str("; ".join(golden.context)) if golden.context else ''}
                 QUESTION: {golden.input}
                 ANSWER:"""
 
-        tokenized_output = tokenizer(prompt, **tokenizer_args)
-        input_ids = tokenized_output.input_ids
+        tokenized = tokenizer(
+            prompt,
+            return_tensors="pt",
+            **tokenizer_args,
+        )
+
+        tokenized_output = {k: v.to(model.device) for k, v in tokenized.items()}
+        
+        input_ids = tokenized_output["input_ids"]
         outputs = model.generate(input_ids)
-        decoded_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        decoded_output = tokenizer.decode(outputs[0][tokenized_output["input_ids"].shape[-1]:], skip_special_tokens=True)
         golden.actual_output = decoded_output
 
     test_cases = convert_goldens_to_test_cases(
