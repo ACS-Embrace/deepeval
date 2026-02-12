@@ -24,6 +24,7 @@ def generate_test_cases(
     tokenizer,
     tokenizer_args: Optional[Dict],
     evaluation_dataset: EvaluationDataset,
+    generator_args: Optional[Dict],
 ) -> List[LLMTestCase]:
     """
     Generate test cases based on a language model.
@@ -39,6 +40,7 @@ def generate_test_cases(
     """
 
     tokenizer_args = tokenizer_args or {}
+    generator_args = generator_args or {}
 
     goldens = evaluation_dataset.goldens
     for golden in goldens:
@@ -55,7 +57,7 @@ def generate_test_cases(
         tokenized_output = {k: v.to(model.device) for k, v in tokenized.items()}
         
         input_ids = tokenized_output["input_ids"]
-        outputs = model.generate(input_ids)
+        outputs = model.generate(input_ids, **generator_args)
         decoded_output = tokenizer.decode(outputs[0][tokenized_output["input_ids"].shape[-1]:], skip_special_tokens=True)
         golden.actual_output = decoded_output
 
