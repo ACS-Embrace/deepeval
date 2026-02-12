@@ -36,6 +36,7 @@ try:
             tokenizer_args: Dict = None,
             aggregation_method: str = "avg",
             show_table: bool = False,
+            generator_args: Dict = None,
         ) -> None:
             super().__init__()
 
@@ -43,6 +44,7 @@ try:
             self.metrics = metrics
             self.evaluation_dataset = evaluation_dataset
             self.tokenizer_args = tokenizer_args
+            self.generator_args = generator_args
             self.aggregation_method = aggregation_method
             self.trainer = trainer
 
@@ -140,6 +142,7 @@ try:
                 self.trainer.tokenizer,
                 self.tokenizer_args,
                 self.evaluation_dataset,
+                self.generator_args,
             )
             self.evaluation_dataset.test_cases = test_cases
 
