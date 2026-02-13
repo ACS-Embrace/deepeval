@@ -158,7 +158,7 @@ try:
             """
             if (
                 self.show_table
-                and len(state.log_history) <= self.trainer.args.num_train_epochs
+                and len(state.deepeval_metric_history) <= state.epoch
             ):
                 self.rich_manager.advance_progress()
 
