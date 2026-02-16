@@ -76,8 +76,8 @@ try:
             )
             scores = {}
             for test_result in test_results:
-                for metric in test_result.metrics:
-                    metric_name = str(metric.__name__)
+                for metric in test_result.metrics_data:
+                    metric_name = str(metric.name)
                     metric_score = metric.score
                     scores.setdefault(metric_name, []).append(metric_score)
 
