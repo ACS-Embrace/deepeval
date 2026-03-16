@@ -20,7 +20,7 @@ class RichManager:
         self.show_table = show_table
         self.total_train_epochs = total_train_epochs
         self.console = Console()
-        self.live = Live(auto_refresh=True, console=self.console)
+        self.live = None
         self.train_bar_started = False
 
         self.progress_bar_columns = [
@@ -66,14 +66,22 @@ class RichManager:
         Args:
             text (str): Text to be displayed in the spinner.
         """
+        if self.live is None or not self.live._started:
+            return
         self.spinner.reset(self.spinner_task, description=text)
 
     def stop(self) -> None:
         """Stop the live display."""
-        self.live.stop()
+        if self.live is not None and self.live._started:
+            self.live.stop()
+        self.live = None
 
     def start(self) -> None:
         """Start the live display and initialize progress trackers."""
+        if self.live is not None and self.live._started:
+            self.live.stop()
+        self.live = Live(auto_refresh=True, console=self.console)
+        self.train_bar_started = False
         self.live.start()
         self._initialize_progress_trackers()
 
@@ -84,6 +92,8 @@ class RichManager:
         Args:
             column (Columns): New column to be displayed.
         """
+        if self.live is None or not self.live._started:
+            return
         self.live.update(column, refresh=True)
 
     def create_column(self) -> Union[Columns, Table]:

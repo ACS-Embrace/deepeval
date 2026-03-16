@@ -58,6 +58,7 @@ try:
             self.train_bar_started = False
             self.epoch_counter = 0
             self.deepeval_metric_history = []
+            self._pending_scores = None
 
             total_train_epochs = self.trainer.args.num_train_epochs
             self.rich_manager = RichManager(show_table, total_train_epochs)
@@ -132,8 +133,14 @@ try:
         ):
             """
             Event triggered at the end of each training epoch.
+            Generates test cases and evaluates them so that on_log only
+            needs to merge the pre-computed scores with training metrics.
             """
             control.should_log = True
+
+            if not self.show_table:
+                return
+
             self.rich_manager.change_spinner_text(
                 self.task_descriptions["generating"]
             )
@@ -146,6 +153,11 @@ try:
             )
             self.evaluation_dataset.test_cases = test_cases
 
+            self.rich_manager.change_spinner_text(
+                self.task_descriptions["evaluate"]
+            )
+            self._pending_scores = self._calculate_metric_scores()
+
         def on_log(
             self,
             args: TrainingArguments,
@@ -155,20 +167,20 @@ try:
         ):
             """
             Event triggered after logging the last logs.
+            Merges pre-computed deepeval scores with the trainer's logged
+            training metrics and updates the display table.
             """
             if (
                 self.show_table
+                and self._pending_scores is not None
                 and len(self.deepeval_metric_history) + 1 <= state.epoch
             ):
                 self.rich_manager.advance_progress()
 
-                self.rich_manager.change_spinner_text(
-                    self.task_descriptions["evaluate"]
-                )
-
-                scores = self._calculate_metric_scores()
+                scores = dict(self._pending_scores)
+                self._pending_scores = None
+                scores.update(state.log_history[-1])
                 self.deepeval_metric_history.append(scores)
-                self.deepeval_metric_history[-1].update(state.log_history[-1])
 
                 self.rich_manager.change_spinner_text(
                     self.task_descriptions["training"]
@@ -191,7 +203,7 @@ try:
                     table.add_column(key)
 
                 for row in self.deepeval_metric_history:
-                    table.add_row(*[str(row[value]) for value in order])
+                    table.add_row(*[str(row.get(value, "N/A")) for value in order])
 
             return column
 

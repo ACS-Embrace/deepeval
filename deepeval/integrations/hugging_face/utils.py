@@ -14,7 +14,8 @@ def get_column_order(scores: Dict) -> List[str]:
     Returns:
         List[str]: List of column names in the desired order.
     """
-    order = ["epoch", "step", "loss", "learning_rate"]
+    preferred = ["epoch", "step", "loss", "learning_rate"]
+    order = [key for key in preferred if key in scores]
     order.extend([key for key in scores.keys() if key not in order])
     return order
 
