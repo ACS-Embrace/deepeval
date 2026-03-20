@@ -1140,7 +1140,7 @@ class Synthesizer:
             for _ in range(self.filtration_config.max_quality_retries):
                 # Evaluate synthetically generated inputs
                 evaluation_prompt = FilterTemplate.evaluate_synthetic_inputs(
-                    input
+                    input, context
                 )
                 feedback_res: InputFeedback = await self._a_generate_schema(
                     evaluation_prompt,

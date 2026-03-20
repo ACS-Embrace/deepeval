@@ -461,54 +461,50 @@ class SynthesizerTemplate:
 class FilterTemplate:
 
     @staticmethod
-    def evaluate_synthetic_inputs(query):
+    def evaluate_synthetic_inputs(query, context):
         return f"""Evaluate the provided synthetic query (which may be a question, task, or instruction) for clarity and answerability, assuming sufficient domain knowledge. Use the following criteria to guide your assessment:
 
-        1. **Self-Containment**: Can the query be understood and completed without needing additional context or external references not provided within the query itself? It should be self-sufficient, meaning it doesn't depend on specific documents, tables, or prior knowledge not included in the query.
-        2. **Clear Objective**: Does the query clearly convey its intent? It should specify what information, action, or response is being requested, allowing for a direct and appropriate answer or execution without ambiguity.
-
+        Self-Containment: Can the query be understood and completed without needing additional context or external references not provided within the query itself or the given context? It should be self-sufficient, meaning it doesn't depend on specific documents, tables, or prior knowledge not included in the query or context. Account for terminology used in the given context; do not penalize for specialized terminology if it aligns with or is explained in the context.
+        Clear Objective: Does the query clearly convey its intent? It should specify what information, action, or response is being requested, allowing for a direct and appropriate answer or execution without ambiguity.
+        Correctness: Does the query use terminology, codes, or references correctly based on the provided context? Identify any misidentifications, inaccuracies, or errors in the query (e.g., confusing IV2000 with IP2000) by comparing it to the context, and score lower if such issues are present.
         Based on these criteria, assign a score between 0 and 1, where:
-        - "1" means the query is clear, self-contained, and answerable.
-        - "0" means the query is vague, relies on external references, or is unclear in its intent.
-        - Scores between 0 and 1 indicate partial clarity or answerability, where the query meets some but not all of the criteria.
 
+
+        "1" means the query is clear, self-contained, correct, and answerable.
+        "0" means the query is vague, relies on external references, is unclear in its intent, or is incorrect based on the context.
+        Scores between 0 and 1 indicate partial clarity, answerability, or correctness, where the query meets some but not all of the criteria.
         **
         IMPORTANT: Please make sure to only return in JSON format, with the 'feedback' and 'score' keys.
-
         Example query: "What technological innovations have changed communication over the last 20 years?"
         Example JSON:
         {{
-            "feedback": "The query is somewhat vague as it asks about 'technological innovations' without specifying particular areas of communication (e.g., social media, messaging apps). It could be improved by narrowing the focus to a specific type of innovation or timeframe.",
-            "score": 0.5
+        "feedback": "The query is somewhat vague as it asks about 'technological innovations' without specifying particular areas of communication (e.g., social media, messaging apps). It could be improved by narrowing the focus to a specific type of innovation or timeframe.",
+        "score": 0.5
         }}
-
         Example query: "Explain the impact of renewable energy policies in Germany on local economies in 2021."
         Example JSON:
         {{
-            "feedback": "This query clearly specifies the focus (renewable energy policies), the region (Germany), and the timeframe (2021). It is self-contained and answerable without needing additional context, making it clear and effective.",
-            "score": 1.0
+        "feedback": "This query clearly specifies the focus (renewable energy policies), the region (Germany), and the timeframe (2021). It is self-contained and answerable without needing additional context, making it clear and effective.",
+        "score": 1.0
         }}
-
         Example query: "What are the main criticisms of the current education system in the United States?"
         Example JSON:
         {{
-            "feedback": "The question is broad and lacks specificity, as 'main criticisms' could refer to various aspects (e.g., funding, curriculum, access). To improve clarity, it could specify which aspect of the education system is being critiqued.",
-            "score": 0.4
+        "feedback": "The question is broad and lacks specificity, as 'main criticisms' could refer to various aspects (e.g., funding, curriculum, access). To improve clarity, it could specify which aspect of the education system is being critiqued.",
+        "score": 0.4
         }}
-
         Example query: "Discuss the role of AI in healthcare, particularly in diagnostics, as noted in the last report."
         Example JSON:
         {{
-            "feedback": "This question refers to 'the last report' without providing context or details, making it unclear and dependent on external information. It would be clearer if it provided some background on the report or defined what aspects of AI in diagnostics to address.",
-            "score": 0.3
+        "feedback": "This question refers to 'the last report' without providing context or details, making it unclear and dependent on external information. It would be clearer if it provided some background on the report or defined what aspects of AI in diagnostics to address.",
+        "score": 0.3
         }}
-                
-        The `feedback` MUST be a STRING and `score` must be a float from 0 to 1.
+        The feedback MUST be a STRING and score must be a float from 0 to 1.
         **
-                
         Query:
         {query}
-
+        Context:
+        {context}
         JSON:
         """
 
