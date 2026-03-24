@@ -122,7 +122,10 @@ try:
             """
             Event triggered at the beginning of each training epoch.
             """
-            self.epoch_counter += 1
+            try:
+                self.epoch_counter += 1
+            except Exception as e:
+                print(f"[DeepEval] Warning: on_epoch_begin failed and was skipped: {e}")
 
         def on_epoch_end(
             self,
@@ -136,27 +139,30 @@ try:
             Generates test cases and evaluates them so that on_log only
             needs to merge the pre-computed scores with training metrics.
             """
-            control.should_log = True
+            try:
+                control.should_log = True
 
-            if not self.show_table:
-                return
+                if not self.show_table:
+                    return
 
-            self.rich_manager.change_spinner_text(
-                self.task_descriptions["generating"]
-            )
-            test_cases = generate_test_cases(
-                self.trainer.model,
-                self.trainer.tokenizer,
-                self.tokenizer_args,
-                self.evaluation_dataset,
-                self.generator_args,
-            )
-            self.evaluation_dataset.test_cases = test_cases
+                self.rich_manager.change_spinner_text(
+                    self.task_descriptions["generating"]
+                )
+                test_cases = generate_test_cases(
+                    self.trainer.model,
+                    self.trainer.tokenizer,
+                    self.tokenizer_args,
+                    self.evaluation_dataset,
+                    self.generator_args,
+                )
+                self.evaluation_dataset.test_cases = test_cases
 
-            self.rich_manager.change_spinner_text(
-                self.task_descriptions["evaluate"]
-            )
-            self._pending_scores = self._calculate_metric_scores()
+                self.rich_manager.change_spinner_text(
+                    self.task_descriptions["evaluate"]
+                )
+                self._pending_scores = self._calculate_metric_scores()
+            except Exception as e:
+                print(f"[DeepEval] Warning: on_epoch_end failed and was skipped: {e}")
 
         def on_log(
             self,
@@ -170,23 +176,26 @@ try:
             Merges pre-computed deepeval scores with the trainer's logged
             training metrics and updates the display table.
             """
-            if (
-                self.show_table
-                and self._pending_scores is not None
-                and len(self.deepeval_metric_history) + 1 <= state.epoch
-            ):
-                self.rich_manager.advance_progress()
+            try:
+                if (
+                    self.show_table
+                    and self._pending_scores is not None
+                    and len(self.deepeval_metric_history) + 1 <= state.epoch
+                ):
+                    self.rich_manager.advance_progress()
 
-                scores = dict(self._pending_scores)
-                self._pending_scores = None
-                scores.update(state.log_history[-1])
-                self.deepeval_metric_history.append(scores)
+                    scores = dict(self._pending_scores)
+                    self._pending_scores = None
+                    scores.update(state.log_history[-1])
+                    self.deepeval_metric_history.append(scores)
 
-                self.rich_manager.change_spinner_text(
-                    self.task_descriptions["training"]
-                )
-                columns = self._generate_table()
-                self.rich_manager.update(columns)
+                    self.rich_manager.change_spinner_text(
+                        self.task_descriptions["training"]
+                    )
+                    columns = self._generate_table()
+                    self.rich_manager.update(columns)
+            except Exception as e:
+                print(f"[DeepEval] Warning: on_log failed and was skipped: {e}")
 
         def _generate_table(self):
             """
@@ -196,7 +205,10 @@ try:
                 rich.Columns: contains table and 2 progress bars
             """
             column, table = self.rich_manager.create_column()
-            order = get_column_order(self.deepeval_metric_history[-1])
+            all_keys = {}
+            for row in self.deepeval_metric_history:
+                all_keys.update(row)
+            order = get_column_order(all_keys)
 
             if self.show_table:
                 for key in order:
@@ -217,10 +229,13 @@ try:
             """
             Event triggered at the end of model training.
             """
-            self.rich_manager.change_spinner_text(
-                self.task_descriptions["training_end"]
-            )
-            self.rich_manager.stop()
+            try:
+                self.rich_manager.change_spinner_text(
+                    self.task_descriptions["training_end"]
+                )
+                self.rich_manager.stop()
+            except Exception as e:
+                print(f"[DeepEval] Warning: on_train_end failed and was skipped: {e}")
 
         def on_train_begin(
             self,
@@ -232,10 +247,13 @@ try:
             """
             Event triggered at the beginning of model training.
             """
-            self.rich_manager.start()
-            self.rich_manager.change_spinner_text(
-                self.task_descriptions["training"]
-            )
+            try:
+                self.rich_manager.start()
+                self.rich_manager.change_spinner_text(
+                    self.task_descriptions["training"]
+                )
+            except Exception as e:
+                print(f"[DeepEval] Warning: on_train_begin failed and was skipped: {e}")
 
 except ImportError:
 
