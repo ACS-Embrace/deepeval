@@ -1,0 +1,354 @@
+"""
+Unsloth-compatible DeepEval callbacks.
+
+Wraps model inference in Unsloth's FastLanguageModel.for_inference() /
+FastLanguageModel.for_training() guards, which are required for correct
+LoRA/PEFT behaviour during generation.
+
+Single-callback usage
+---------------------
+    callback = DeepEvalUnslothCallback(trainer=trainer, ...)
+    trainer.add_callback(callback)
+
+Multi-callback usage (shared model, multiple eval datasets / metric sets)
+--------------------------------------------------------------------------
+HuggingFace invokes callbacks sequentially in one thread, so a traditional
+blocking barrier is not needed.  UnslothBarrier uses reference-counting
+instead: the first callback to arrive activates inference mode, and the
+last one to finish restores training mode.  State resets automatically
+for the next epoch (cyclic).
+
+    barrier = UnslothBarrier(n_callbacks=2)
+    trainer.add_callback(DeepEvalUnslothCallback(..., barrier=barrier))
+    trainer.add_callback(DeepEvalUnslothCallback(..., barrier=barrier))
+"""
+
+import warnings
+from typing import Dict, List, Optional
+
+from transformers import Trainer, TrainerControl, TrainerState, TrainingArguments
+
+from deepeval.dataset import EvaluationDataset
+from deepeval.metrics import BaseMetric
+from deepeval.integrations.hugging_face.callback import DeepEvalHuggingFaceCallback
+from deepeval.integrations.hugging_face.utils import generate_test_cases
+
+try:
+    from unsloth import FastLanguageModel as _FastLanguageModel
+except ImportError:
+    _FastLanguageModel = None
+
+
+class UnslothBarrier:
+    """
+    Coordinates a single for_inference / for_training toggle across
+    multiple DeepEvalUnslothCallback instances that share the same model.
+
+    Because HuggingFace calls callbacks sequentially (not concurrently),
+    this is a reference-counting guard rather than a blocking barrier:
+
+    - The *first* callback to call enter_inference() calls
+      FastLanguageModel.for_inference(model).
+    - Subsequent callbacks skip the switch (model is already in inference mode).
+    - The *last* callback to call exit_inference() calls
+      FastLanguageModel.for_training(model) and resets all counters so
+      the barrier is ready for the next epoch (cyclic behaviour).
+
+    If any callback raises during its inference step, exit_inference()
+    is still called from a finally block, so the model is always
+    restored to training mode.
+
+    Args:
+        n_callbacks: Total number of DeepEvalUnslothCallback instances
+                     sharing this barrier.  Must be >= 1.
+    """
+
+    def __init__(self, n_callbacks: int) -> None:
+        if n_callbacks < 1:
+            raise ValueError("n_callbacks must be >= 1")
+        self.n_callbacks = n_callbacks
+        self._enter_count: int = 0
+        self._exit_count: int = 0
+        self._inference_active: bool = False
+
+    def enter_inference(self, model) -> None:
+        """
+        Must be called by each callback before running inference.
+        Only the first caller per epoch activates for_inference().
+        """
+        self._enter_count += 1
+        if self._enter_count == 1:
+            if _FastLanguageModel is None:
+                raise ImportError(
+                    "unsloth is not installed. Install it with: pip install unsloth"
+                )
+            _FastLanguageModel.for_inference(model)
+            self._inference_active = True
+
+    def exit_inference(self, model) -> None:
+        """
+        Must be called by each callback after inference, even on failure.
+        Only the last caller per epoch restores for_training() and resets
+        the barrier for the next epoch.
+        """
+        self._exit_count += 1
+        if self._exit_count >= self.n_callbacks:
+            if self._inference_active:
+                if _FastLanguageModel is None:
+                    warnings.warn(
+                        "[DeepEval] Cannot restore training mode: "
+                        "unsloth is not installed."
+                    )
+                else:
+                    _FastLanguageModel.for_training(model)
+            # Reset for the next epoch (cyclic).
+            self._enter_count = 0
+            self._exit_count = 0
+            self._inference_active = False
+
+    @property
+    def in_inference(self) -> bool:
+        """True while the model is currently in inference mode."""
+        return self._inference_active
+
+
+class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
+    """
+    DeepEval callback with Unsloth for_inference / for_training guards.
+
+    Inherits all behaviour from DeepEvalHuggingFaceCallback and overrides
+    on_epoch_end to switch the model into inference mode before generating
+    outputs and back to training mode afterwards — always, even if the
+    evaluation raises.
+
+    Args:
+        trainer:            HuggingFace Trainer instance.
+        evaluation_dataset: Dataset containing goldens to evaluate against.
+        metrics:            List of DeepEval BaseMetric instances.
+        tokenizer_args:     Forwarded to tokenizer(...).
+        aggregation_method: "avg" (default), "min", or "max".
+        show_table:         Display the Rich metrics table if True.
+        generator_args:     Forwarded to model.generate(...).
+        barrier:            Optional shared UnslothBarrier.  Pass the same
+                            instance to every callback that shares a model
+                            so for_inference is toggled exactly once per
+                            epoch regardless of how many callbacks run.
+    """
+
+    def __init__(
+        self,
+        trainer: Trainer,
+        evaluation_dataset: EvaluationDataset = None,
+        metrics: List[BaseMetric] = None,
+        tokenizer_args: Dict = None,
+        aggregation_method: str = "avg",
+        show_table: bool = False,
+        generator_args: Dict = None,
+        barrier: Optional[UnslothBarrier] = None,
+    ) -> None:
+        super().__init__(
+            trainer=trainer,
+            evaluation_dataset=evaluation_dataset,
+            metrics=metrics,
+            tokenizer_args=tokenizer_args,
+            aggregation_method=aggregation_method,
+            show_table=show_table,
+            generator_args=generator_args,
+        )
+        self._barrier = barrier
+        self._owns_inference: bool = False  # only used when barrier is None
+
+        if _FastLanguageModel is None and barrier is None:
+            warnings.warn(
+                "[DeepEval] unsloth is not installed. "
+                "DeepEvalUnslothCallback will run without "
+                "for_inference / for_training mode switching."
+            )
+
+    def _activate_inference(self, model) -> None:
+        """Switch model to inference mode."""
+        if self._barrier is not None:
+            self._barrier.enter_inference(model)
+        elif _FastLanguageModel is not None:
+            _FastLanguageModel.for_inference(model)
+            self._owns_inference = True
+
+    def _deactivate_inference(self, model) -> None:
+        """
+        Restore model to training mode.
+        Safe to call even if _activate_inference was never reached —
+        always called from a finally block.
+        """
+        if self._barrier is not None:
+            self._barrier.exit_inference(model)
+        elif self._owns_inference and _FastLanguageModel is not None:
+            try:
+                _FastLanguageModel.for_training(model)
+            finally:
+                self._owns_inference = False
+
+    def on_epoch_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        """
+        Wraps the parent's generate + evaluate block in Unsloth mode guards.
+
+        Execution order
+        ---------------
+        1. Set control.should_log = True (mirrors parent behaviour).
+        2. Early-return if show_table is False (no inference needed).
+        3. Call _activate_inference() — may be a no-op if this callback
+           is not the first to arrive at the barrier this epoch.
+        4. Generate test-case outputs via the model.
+        5. Run DeepEval metrics.
+        6. In the finally block, call _deactivate_inference() regardless
+           of success or failure so the model always returns to training.
+        """
+        try:
+            control.should_log = True
+
+            if not self.show_table:
+                return
+
+            model = self.trainer.model
+            self._owns_inference = False
+
+            try:
+                self._activate_inference(model)
+
+                self.rich_manager.change_spinner_text(
+                    self.task_descriptions["generating"]
+                )
+                test_cases = generate_test_cases(
+                    model,
+                    self.trainer.tokenizer,
+                    self.tokenizer_args,
+                    self.evaluation_dataset,
+                    self.generator_args,
+                )
+                self.evaluation_dataset.test_cases = test_cases
+
+                self.rich_manager.change_spinner_text(
+                    self.task_descriptions["evaluate"]
+                )
+                self._pending_scores = self._calculate_metric_scores()
+
+            except Exception as inner_e:
+                print(
+                    f"[DeepEval] Warning: on_epoch_end inference/evaluation "
+                    f"failed and was skipped: {inner_e}"
+                )
+            finally:
+                # Always restore training mode, even after a failure.
+                try:
+                    self._deactivate_inference(model)
+                except Exception as restore_e:
+                    print(
+                        f"[DeepEval] Warning: failed to restore training mode "
+                        f"after on_epoch_end: {restore_e}"
+                    )
+
+        except Exception as e:
+            print(
+                f"[DeepEval] Warning: on_epoch_end failed and was skipped: {e}"
+            )
+
+
+class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
+    """
+    Extends DeepEvalUnslothCallback with Weights & Biases metric logging.
+
+    After each epoch's evaluation completes, the DeepEval metric scores
+    stored in _pending_scores are logged to the active wandb run under
+    the "deepeval/" namespace (e.g. "deepeval/Answer Relevancy").
+    Standard training metrics (loss, lr, etc.) are left to the HuggingFace
+    WandbCallback to handle — this only adds the deepeval layer on top.
+
+    Args:
+        trainer:            HuggingFace Trainer instance.
+        evaluation_dataset: Dataset containing goldens to evaluate against.
+        metrics:            List of DeepEval BaseMetric instances.
+        tokenizer_args:     Forwarded to tokenizer(...).
+        aggregation_method: "avg" (default), "min", or "max".
+        show_table:         Display the Rich metrics table if True.
+        generator_args:     Forwarded to model.generate(...).
+        barrier:            Optional shared UnslothBarrier.
+        wandb_prefix:       Prefix applied to every logged key.
+                            Defaults to "deepeval/".
+    """
+
+    def __init__(
+        self,
+        trainer: Trainer,
+        evaluation_dataset: EvaluationDataset = None,
+        metrics: List[BaseMetric] = None,
+        tokenizer_args: Dict = None,
+        aggregation_method: str = "avg",
+        show_table: bool = False,
+        generator_args: Dict = None,
+        barrier: Optional[UnslothBarrier] = None,
+        wandb_prefix: str = "deepeval/",
+    ) -> None:
+        super().__init__(
+            trainer=trainer,
+            evaluation_dataset=evaluation_dataset,
+            metrics=metrics,
+            tokenizer_args=tokenizer_args,
+            aggregation_method=aggregation_method,
+            show_table=show_table,
+            generator_args=generator_args,
+            barrier=barrier,
+        )
+        self._wandb_prefix = wandb_prefix
+
+        try:
+            import wandb as _wandb  # noqa: F401
+        except ImportError:
+            warnings.warn(
+                "[DeepEval] wandb is not installed. "
+                "DeepEvalUnslothWandbCallback will not log metrics. "
+                "Install it with: pip install wandb"
+            )
+
+    def on_epoch_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        """
+        Calls the parent on_epoch_end (inference guard + evaluation),
+        then logs whatever landed in _pending_scores to wandb.
+        """
+        super().on_epoch_end(args, state, control, **kwargs)
+
+        if not self._pending_scores:
+            return
+
+        try:
+            import wandb
+
+            if wandb.run is None:
+                warnings.warn(
+                    "[DeepEval] No active wandb run found. "
+                    "Call wandb.init() before training to enable logging."
+                )
+                return
+
+            log_payload = {
+                f"{self._wandb_prefix}{k}": v
+                for k, v in self._pending_scores.items()
+            }
+            # Use epoch as the wandb step so deepeval metrics align with
+            # the rest of the training curves.
+            wandb.log(log_payload, step=int(state.epoch))
+
+        except Exception as e:
+            print(
+                f"[DeepEval] Warning: wandb logging failed and was skipped: {e}"
+            )
