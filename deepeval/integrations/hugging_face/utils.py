@@ -57,8 +57,7 @@ def generate_test_cases(
 
         tokenized_output = {k: v.to(model.device) for k, v in tokenized.items()}
         
-        input_ids = tokenized_output["input_ids"]
-        outputs = model.generate(input_ids, **generator_args)
+        outputs = model.generate(**tokenized_output, **generator_args)
         decoded_output = tokenizer.decode(outputs[0][tokenized_output["input_ids"].shape[-1]:], skip_special_tokens=True)
         golden.actual_output = decoded_output
 
