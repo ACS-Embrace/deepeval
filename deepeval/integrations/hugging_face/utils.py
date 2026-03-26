@@ -55,12 +55,13 @@ def generate_test_cases(
             **tokenizer_args,
         )
 
-        tokenized_output = {k: v.to(model.device) for k, v in tokenized.items()}
+        tokenized_output = {k: v.to('cuda') for k, v in tokenized.items()}
         
         outputs = model.generate(**tokenized_output, **generator_args)
         decoded_output = tokenizer.decode(outputs[0][tokenized_output["input_ids"].shape[-1]:], skip_special_tokens=True)
         golden.actual_output = decoded_output
-
+        del tokenized_output, outputs
+        torch.cuda.empty_cache()
     test_cases = convert_goldens_to_test_cases(
         goldens=evaluation_dataset.goldens,
         _alias=evaluation_dataset.alias,
