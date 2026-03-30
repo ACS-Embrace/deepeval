@@ -11,6 +11,15 @@ class InputFeedback(BaseModel):
     feedback: str
 
 
+class ExpectedOutputFeedback(BaseModel):
+    score: float
+    feedback: str
+
+
+class RewrittenExpectedOutput(BaseModel):
+    rewritten_expected_output: str
+
+
 class SyntheticData(BaseModel):
     input: str
 
