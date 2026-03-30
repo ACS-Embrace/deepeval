@@ -82,9 +82,10 @@ try:
             scores = {}
             for test_result in test_results:
                 for metric in test_result.metrics_data:
+                    if metric.score is None:
+                        continue
                     metric_name = str(metric.name)
-                    metric_score = metric.score
-                    scores.setdefault(metric_name, []).append(metric_score)
+                    scores.setdefault(metric_name, []).append(metric.score)
 
             scores = self._aggregate_scores(scores)
             return scores

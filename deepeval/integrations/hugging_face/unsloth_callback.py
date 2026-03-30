@@ -236,6 +236,10 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
             if not self._should_evaluate:
                 return
 
+            # Reset so a failed epoch never re-logs stale scores from
+            # a previous epoch (matches the docstring guarantee).
+            self._pending_scores = None
+
             model = self.trainer.model
             self._owns_inference = False
 
@@ -338,6 +342,11 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
                 "Install it with: pip install wandb"
             )
 
+    @property
+    def _should_evaluate(self) -> bool:
+        """Always evaluate so wandb metrics are logged regardless of show_table."""
+        return True
+
     def on_epoch_end(
         self,
         args: TrainingArguments,
@@ -351,7 +360,11 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
         """
         super().on_epoch_end(args, state, control, **kwargs)
 
-        if not self._pending_scores:
+        scores = self._pending_scores
+        # Clear immediately so stale scores are never replayed on a future epoch.
+        self._pending_scores = None
+
+        if not scores:
             return
 
         try:
@@ -366,7 +379,7 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
 
             log_payload = {
                 f"{self._wandb_prefix}{k}": v
-                for k, v in self._pending_scores.items()
+                for k, v in scores.items()
             }
             # Use epoch as the wandb step so deepeval metrics align with
             # the rest of the training curves.
