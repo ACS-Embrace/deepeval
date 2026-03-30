@@ -46,7 +46,9 @@ from deepeval.synthesizer.schema import (
     SQLData,
     Response,
     InputFeedback,
+    ExpectedOutputFeedback,
     RewrittenInput,
+    RewrittenExpectedOutput,
     PromptStyling,
     ConversationalPromptStyling,
 )
@@ -721,6 +723,7 @@ class Synthesizer:
 
             # Generate expected output
             expected_output = None
+            expected_output_score = None
             if include_expected_output:
                 expected_output_prompt = SynthesizerTemplate.generate_synthetic_expected_output(
                     input=evolved_input,
@@ -728,6 +731,13 @@ class Synthesizer:
                     expected_output_format=self.styling_config.expected_output_format,
                 )
                 expected_output = await self._a_generate(expected_output_prompt)
+                expected_output, expected_output_score = (
+                    await self._a_score_expected_output(
+                        input=evolved_input,
+                        context=context,
+                        expected_output=expected_output,
+                    )
+                )
                 update_pbar(
                     progress, pbar_evolve_input_ids[input_index], remove=False
                 )
@@ -746,6 +756,7 @@ class Synthesizer:
                 additional_metadata={
                     "evolutions": evolutions_used,
                     "synthetic_input_quality": scores[input_index],
+                    "synthetic_expected_output_quality": expected_output_score,
                     # "context_quality": (
                     #     context_scores[data_index]
                     #     if context_scores is not None
@@ -1170,6 +1181,42 @@ class Synthesizer:
 
         return filtered_inputs, scores
 
+    async def _a_score_expected_output(
+        self,
+        input: str,
+        context: List[str],
+        expected_output: str,
+    ) -> Tuple[str, float]:
+        score = 0.0
+        feedback = ""
+        for _ in range(self.filtration_config.max_quality_retries):
+            evaluation_prompt = FilterTemplate.evaluate_synthetic_expected_output(
+                input, expected_output, context
+            )
+            feedback_res: ExpectedOutputFeedback = await self._a_generate_schema(
+                evaluation_prompt,
+                ExpectedOutputFeedback,
+                self.filtration_config.critic_model,
+            )
+            feedback, score = feedback_res.feedback, feedback_res.score
+            if (
+                score
+                >= self.filtration_config.synthetic_expected_output_quality_threshold
+            ):
+                break
+
+            rewrite_prompt = SynthesizerTemplate.rewrite_synthetic_expected_output(
+                context, input, expected_output, feedback
+            )
+            rewritten_res: RewrittenExpectedOutput = await self._a_generate_schema(
+                rewrite_prompt,
+                RewrittenExpectedOutput,
+                self.model,
+            )
+            expected_output = rewritten_res.rewritten_expected_output
+
+        return expected_output, score
+
     def _rewrite_inputs(
         self,
         context: List[str],
@@ -1214,6 +1261,42 @@ class Synthesizer:
             filtered_inputs.append(SyntheticData(input=input))
 
         return filtered_inputs, scores
+
+    def _score_expected_output(
+        self,
+        input: str,
+        context: List[str],
+        expected_output: str,
+    ) -> Tuple[str, float]:
+        score = 0.0
+        feedback = ""
+        for _ in range(self.filtration_config.max_quality_retries):
+            evaluation_prompt = FilterTemplate.evaluate_synthetic_expected_output(
+                input, expected_output, context
+            )
+            feedback_res: ExpectedOutputFeedback = self._generate_schema(
+                evaluation_prompt,
+                ExpectedOutputFeedback,
+                self.filtration_config.critic_model,
+            )
+            feedback, score = feedback_res.feedback, feedback_res.score
+            if (
+                score
+                >= self.filtration_config.synthetic_expected_output_quality_threshold
+            ):
+                break
+
+            rewrite_prompt = SynthesizerTemplate.rewrite_synthetic_expected_output(
+                context, input, expected_output, feedback
+            )
+            rewritten_res: RewrittenExpectedOutput = self._generate_schema(
+                rewrite_prompt,
+                RewrittenExpectedOutput,
+                self.model,
+            )
+            expected_output = rewritten_res.rewritten_expected_output
+
+        return expected_output, score
 
     #############################################################
     # Helper Methods for Input Evolution

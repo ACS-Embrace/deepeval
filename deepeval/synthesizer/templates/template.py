@@ -247,6 +247,43 @@ class SynthesizerTemplate:
         """
 
     @staticmethod
+    def rewrite_synthetic_expected_output(
+        context, input, original_expected_output, feedback
+    ):
+        return f"""I want you to act as an answer rewriter. Based on the provided context, input (question/task), original expected output, and feedback, generate a rewritten expected output that is more accurate, complete, and directly addresses the input.
+
+        **
+        IMPORTANT: Please make sure to only return in JSON format, with the 'rewritten_expected_output' key.
+
+        Example context: "The Golden Gate Bridge, located in San Francisco, was completed in 1937 and is known for its Art Deco design."
+        Example input: "When was the Golden Gate Bridge completed and what style is it?"
+        Example expected output: "It was completed in 1937."
+        Example feedback: "The answer only partially addresses the input — it correctly states the completion year but omits the architectural style (Art Deco) mentioned in the context."
+        Example JSON:
+        {{
+            "rewritten_expected_output": "The Golden Gate Bridge was completed in 1937 and is known for its Art Deco design."
+        }}
+
+        You should base the rewritten expected output only on the context, input, and feedback provided.
+        The `rewritten_expected_output` MUST be a STRING.
+        **
+
+        Context:
+        {context}
+
+        Input:
+        {input}
+
+        Expected Output:
+        {original_expected_output}
+
+        Feedback:
+        {feedback}
+
+        JSON:
+        """
+
+    @staticmethod
     def generate_synthetic_scenarios(
         context: str,
         max_goldens_per_context: int,
@@ -503,6 +540,45 @@ class FilterTemplate:
         **
         Query:
         {query}
+        Context:
+        {context}
+        JSON:
+        """
+
+    @staticmethod
+    def evaluate_synthetic_expected_output(input, expected_output, context):
+        return f"""Evaluate the provided expected output (a candidate answer or response) for reasonableness and relevance to the given input (question, task, or instruction) and context. Use the following criteria to guide your assessment:
+
+        Relevance: Does the expected output directly address and answer the input? It should respond to what was asked without drifting off-topic.
+        Accuracy: Is the expected output factually consistent with the provided context? It should not contradict or introduce information not supported by the context.
+        Completeness: Does the expected output sufficiently cover what the input is asking? A partial answer that omits key information from the context should score lower.
+        Based on these criteria, assign a score between 0 and 1, where:
+
+        "1" means the expected output is fully relevant, accurate, and complete as an answer to the input given the context.
+        "0" means the expected output is irrelevant, inaccurate, or fails to address the input.
+        Scores between 0 and 1 indicate partial quality, where the expected output meets some but not all of the criteria.
+        **
+        IMPORTANT: Please make sure to only return in JSON format, with the 'feedback' and 'score' keys.
+        Example input: "When was the Golden Gate Bridge completed and what style is it?"
+        Example expected output: "It was completed in 1937."
+        Example JSON:
+        {{
+        "feedback": "The answer correctly states the completion year but omits the architectural style (Art Deco) mentioned in the context. It is partially complete.",
+        "score": 0.5
+        }}
+        Example input: "What are the main applications of quantum computing discussed in the paper?"
+        Example expected output: "The paper discusses applications of quantum computing in cryptography and drug discovery."
+        Example JSON:
+        {{
+        "feedback": "The answer is accurate, relevant, and complete — it directly addresses the input and aligns with the context provided.",
+        "score": 1.0
+        }}
+        The feedback MUST be a STRING and score must be a float from 0 to 1.
+        **
+        Input:
+        {input}
+        Expected Output:
+        {expected_output}
         Context:
         {context}
         JSON:
