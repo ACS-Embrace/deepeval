@@ -1,4 +1,4 @@
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Optional
 from .utils import get_column_order, generate_test_cases
 from .rich_manager import RichManager
 
@@ -37,6 +37,7 @@ try:
             aggregation_method: str = "avg",
             show_table: bool = False,
             generator_args: Dict = None,
+            rich_manager: Optional[RichManager] = None,
         ) -> None:
             super().__init__()
 
@@ -61,7 +62,10 @@ try:
             self._pending_scores = None
 
             total_train_epochs = self.trainer.args.num_train_epochs
-            self.rich_manager = RichManager(show_table, total_train_epochs)
+            if rich_manager is not None:
+                self.rich_manager = rich_manager
+            else:
+                self.rich_manager = RichManager(show_table, total_train_epochs)
             self.trainer.remove_callback(ProgressCallback)
 
         def _calculate_metric_scores(self) -> Dict[str, List[float]]:
