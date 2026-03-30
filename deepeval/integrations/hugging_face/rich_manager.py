@@ -22,6 +22,7 @@ class RichManager:
         self.console = Console()
         self.live = None
         self.train_bar_started = False
+        self._ref_count: int = 0  # number of callbacks sharing this manager
 
         self.progress_bar_columns = [
             TextColumn(
@@ -71,15 +72,32 @@ class RichManager:
         self.spinner.reset(self.spinner_task, description=text)
 
     def stop(self) -> None:
-        """Stop the live display."""
+        """
+        Stop the live display.
+
+        When multiple callbacks share this manager, stop() decrements the
+        internal reference count and only tears down the Live display when
+        the last callback has called stop().
+        """
+        if self._ref_count > 1:
+            self._ref_count -= 1
+            return
         if self.live is not None and self.live._started:
             self.live.stop()
         self.live = None
+        self._ref_count = 0
 
     def start(self) -> None:
-        """Start the live display and initialize progress trackers."""
+        """
+        Start the live display and initialize progress trackers.
+
+        Idempotent: if the display is already running (i.e. another callback
+        sharing this manager already called start()), only the reference count
+        is incremented and the display is left untouched.
+        """
+        self._ref_count += 1
         if self.live is not None and self.live._started:
-            self.live.stop()
+            return
         self.live = Live(auto_refresh=True, console=self.console)
         self.train_bar_started = False
         self.live.start()

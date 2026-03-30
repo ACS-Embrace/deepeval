@@ -18,9 +18,16 @@ instead: the first callback to arrive activates inference mode, and the
 last one to finish restores training mode.  State resets automatically
 for the next epoch (cyclic).
 
+Pass a shared RichManager so that all callbacks render into a single live
+display rather than each spawning their own.  The first callback passed the
+RichManager should own it (default); the rest receive it as-is.
+
+    from deepeval.integrations.hugging_face.rich_manager import RichManager
+
+    shared_rm = RichManager(show_table=True, total_train_epochs=trainer.args.num_train_epochs)
     barrier = UnslothBarrier(n_callbacks=2)
-    trainer.add_callback(DeepEvalUnslothCallback(..., barrier=barrier))
-    trainer.add_callback(DeepEvalUnslothCallback(..., barrier=barrier))
+    trainer.add_callback(DeepEvalUnslothCallback(..., barrier=barrier, rich_manager=shared_rm))
+    trainer.add_callback(DeepEvalUnslothCallback(..., barrier=barrier, rich_manager=shared_rm))
 """
 
 import warnings
@@ -31,6 +38,7 @@ from transformers import Trainer, TrainerControl, TrainerState, TrainingArgument
 from deepeval.dataset import EvaluationDataset
 from deepeval.metrics import BaseMetric
 from deepeval.integrations.hugging_face.callback import DeepEvalHuggingFaceCallback
+from deepeval.integrations.hugging_face.rich_manager import RichManager
 from deepeval.integrations.hugging_face.utils import generate_test_cases
 
 try:
@@ -145,6 +153,7 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
         show_table: bool = False,
         generator_args: Dict = None,
         barrier: Optional[UnslothBarrier] = None,
+        rich_manager: Optional[RichManager] = None,
     ) -> None:
         super().__init__(
             trainer=trainer,
@@ -154,6 +163,7 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
             aggregation_method=aggregation_method,
             show_table=show_table,
             generator_args=generator_args,
+            rich_manager=rich_manager,
         )
         self._barrier = barrier
         self._owns_inference: bool = False  # only used when barrier is None
@@ -187,6 +197,16 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
             finally:
                 self._owns_inference = False
 
+    @property
+    def _should_evaluate(self) -> bool:
+        """
+        Controls whether on_epoch_end runs inference + evaluation.
+        Defaults to show_table so the base callback is unchanged.
+        Subclasses (e.g. the W&B callback) can override to True so
+        evaluation always runs regardless of the show_table setting.
+        """
+        return self.show_table
+
     def on_epoch_end(
         self,
         args: TrainingArguments,
@@ -200,18 +220,20 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
         Execution order
         ---------------
         1. Set control.should_log = True (mirrors parent behaviour).
-        2. Early-return if show_table is False (no inference needed).
-        3. Call _activate_inference() — may be a no-op if this callback
+        2. Early-return if _should_evaluate is False (no inference needed).
+        3. Reset _pending_scores to None so a failed epoch never re-logs
+           stale scores from a previous epoch.
+        4. Call _activate_inference() — may be a no-op if this callback
            is not the first to arrive at the barrier this epoch.
-        4. Generate test-case outputs via the model.
-        5. Run DeepEval metrics.
-        6. In the finally block, call _deactivate_inference() regardless
+        5. Generate test-case outputs via the model.
+        6. Run DeepEval metrics.
+        7. In the finally block, call _deactivate_inference() regardless
            of success or failure so the model always returns to training.
         """
         try:
             control.should_log = True
 
-            if not self.show_table:
+            if not self._should_evaluate:
                 return
 
             model = self.trainer.model
@@ -291,6 +313,7 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
         show_table: bool = False,
         generator_args: Dict = None,
         barrier: Optional[UnslothBarrier] = None,
+        rich_manager: Optional[RichManager] = None,
         wandb_prefix: str = "deepeval/",
     ) -> None:
         super().__init__(
@@ -302,6 +325,7 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
             show_table=show_table,
             generator_args=generator_args,
             barrier=barrier,
+            rich_manager=rich_manager,
         )
         self._wandb_prefix = wandb_prefix
 
