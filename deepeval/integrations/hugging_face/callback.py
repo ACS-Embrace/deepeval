@@ -87,20 +87,33 @@ try:
                 )
             if not valid_test_cases:
                 return {}
-            test_results = execute_test_cases(
-                test_cases=valid_test_cases,
-                metrics=self.metrics,
-            )
-            scores = {}
-            for test_result in test_results:
-                for metric in test_result.metrics_data:
-                    if metric.score is None:
-                        continue
-                    metric_name = str(metric.name)
-                    scores.setdefault(metric_name, []).append(metric.score)
 
-            scores = self._aggregate_scores(scores)
-            return scores
+            # Evaluate one test case at a time so a single evaluation LLM
+            # failure (e.g. invalid JSON response) doesn't discard the results
+            # of every other test case.
+            scores = {}
+            eval_failures = 0
+            for tc in valid_test_cases:
+                try:
+                    test_results = execute_test_cases(
+                        test_cases=[tc],
+                        metrics=self.metrics,
+                    )
+                    for test_result in test_results:
+                        for metric in test_result.metrics_data:
+                            if metric.score is None:
+                                continue
+                            scores.setdefault(str(metric.name), []).append(metric.score)
+                except Exception as e:
+                    eval_failures += 1
+                    print(f"[DeepEval] Warning: test case evaluation failed and was skipped: {e}")
+
+            if eval_failures:
+                print(
+                    f"[DeepEval] Warning: {eval_failures} test case(s) failed "
+                    f"during evaluation and were excluded from scores."
+                )
+            return self._aggregate_scores(scores) if scores else {}
 
         def _aggregate_scores(
             self, scores: Dict[str, List[float]]
