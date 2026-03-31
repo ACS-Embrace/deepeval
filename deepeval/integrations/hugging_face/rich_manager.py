@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Dict, List, Union
 
 from rich.live import Live
 from rich.text import Text
@@ -24,6 +24,7 @@ class RichManager:
         self.train_bar_started = False
         self._ref_count: int = 0  # number of callbacks sharing this manager
         self._last_advanced_epoch: int = 0  # prevents multiple advances per epoch
+        self._epoch_data: Dict[int, Dict] = {}  # merged data from all callbacks
 
         self.progress_bar_columns = [
             TextColumn(
@@ -129,6 +130,17 @@ class RichManager:
 
         column = Columns(column_list, equal=True, expand=True)
         return column, new_table
+
+    def contribute_epoch_data(self, epoch: float, data: dict) -> None:
+        """Merge data from one callback into the shared epoch record."""
+        epoch_int = int(epoch)
+        if epoch_int not in self._epoch_data:
+            self._epoch_data[epoch_int] = {}
+        self._epoch_data[epoch_int].update(data)
+
+    def get_merged_history(self) -> List[dict]:
+        """Return per-epoch rows sorted by epoch, merging all callbacks' data."""
+        return [self._epoch_data[k] for k in sorted(self._epoch_data)]
 
     def advance_progress(self, epoch: float) -> None:
         """Advance the progress tracker, at most once per epoch."""

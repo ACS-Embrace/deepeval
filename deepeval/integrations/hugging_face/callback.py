@@ -59,7 +59,6 @@ try:
 
             self.train_bar_started = False
             self.epoch_counter = 0
-            self.deepeval_metric_history = []
             self._pending_scores = None
 
             total_train_epochs = self.trainer.args.num_train_epochs
@@ -225,14 +224,13 @@ try:
                 if (
                     self.show_table
                     and self._pending_scores is not None
-                    and len(self.deepeval_metric_history) + 1 <= state.epoch
                 ):
                     self.rich_manager.advance_progress(state.epoch)
 
                     scores = dict(self._pending_scores)
                     self._pending_scores = None
                     scores.update(state.log_history[-1])
-                    self.deepeval_metric_history.append(scores)
+                    self.rich_manager.contribute_epoch_data(state.epoch, scores)
 
                     self.rich_manager.change_spinner_text(
                         self.task_descriptions["training"]
@@ -251,7 +249,8 @@ try:
             """
             column, table = self.rich_manager.create_column()
             all_keys = {}
-            for row in self.deepeval_metric_history:
+            merged_history = self.rich_manager.get_merged_history()
+            for row in merged_history:
                 all_keys.update(row)
             order = get_column_order(all_keys)
 
@@ -259,7 +258,7 @@ try:
                 for key in order:
                     table.add_column(key)
 
-                for row in self.deepeval_metric_history:
+                for row in merged_history:
                     table.add_row(*[str(row.get(value, "N/A")) for value in order])
 
             return column
