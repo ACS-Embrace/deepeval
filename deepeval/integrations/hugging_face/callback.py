@@ -4,6 +4,7 @@ from .rich_manager import RichManager
 
 from deepeval.metrics import BaseMetric
 from deepeval.evaluate.execute import execute_test_cases
+from deepeval.evaluate.configs import DisplayConfig
 from deepeval.dataset import EvaluationDataset
 
 try:
@@ -75,17 +76,14 @@ try:
             Returns:
                 Dict[str, List[float]]: Metric scores for each test case.
             """
+            all_test_cases = self.evaluation_dataset.test_cases
             valid_test_cases = [
-                tc for tc in self.evaluation_dataset.test_cases
+                tc for tc in all_test_cases
                 if tc.actual_output and tc.actual_output.strip()
             ]
-            skipped = len(self.evaluation_dataset.test_cases) - len(valid_test_cases)
-            if skipped:
-                print(
-                    f"[DeepEval] Warning: {skipped} test case(s) skipped "
-                    f"due to empty actual_output."
-                )
-            if not valid_test_cases:
+            empty_count = len(all_test_cases) - len(valid_test_cases)
+
+            if not valid_test_cases and not empty_count:
                 return {}
 
             # Evaluate one test case at a time so a single evaluation LLM
@@ -98,6 +96,10 @@ try:
                     test_results = execute_test_cases(
                         test_cases=[tc],
                         metrics=self.metrics,
+                        display_config=DisplayConfig(
+                            show_indicator=False,
+                            print_results=False,
+                        ),
                     )
                     for test_result in test_results:
                         for metric in test_result.metrics_data:
@@ -111,8 +113,21 @@ try:
             if eval_failures:
                 print(
                     f"[DeepEval] Warning: {eval_failures} test case(s) failed "
-                    f"during evaluation and were excluded from scores."
+                    f"during metric evaluation and scored 0."
                 )
+
+            # Empty-output and eval-failed test cases count as 0 so the
+            # denominator reflects the true dataset size, not just cases that
+            # happened to produce a parseable answer.
+            penalty_count = empty_count + eval_failures
+            if penalty_count and scores:
+                if empty_count:
+                    print(
+                        f"[DeepEval] Warning: {empty_count} test case(s) had "
+                        f"empty actual_output and scored 0."
+                    )
+                for metric_name in scores:
+                    scores[metric_name].extend([0.0] * penalty_count)
             return self._aggregate_scores(scores) if scores else {}
 
         def _aggregate_scores(
@@ -212,7 +227,7 @@ try:
                     and self._pending_scores is not None
                     and len(self.deepeval_metric_history) + 1 <= state.epoch
                 ):
-                    self.rich_manager.advance_progress()
+                    self.rich_manager.advance_progress(state.epoch)
 
                     scores = dict(self._pending_scores)
                     self._pending_scores = None

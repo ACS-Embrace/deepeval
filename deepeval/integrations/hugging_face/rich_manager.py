@@ -23,6 +23,7 @@ class RichManager:
         self.live = None
         self.train_bar_started = False
         self._ref_count: int = 0  # number of callbacks sharing this manager
+        self._last_advanced_epoch: int = 0  # prevents multiple advances per epoch
 
         self.progress_bar_columns = [
             TextColumn(
@@ -129,8 +130,12 @@ class RichManager:
         column = Columns(column_list, equal=True, expand=True)
         return column, new_table
 
-    def advance_progress(self) -> None:
-        """Advance the progress tracker."""
+    def advance_progress(self, epoch: float) -> None:
+        """Advance the progress tracker, at most once per epoch."""
+        epoch_int = int(epoch)
+        if epoch_int <= self._last_advanced_epoch:
+            return
+        self._last_advanced_epoch = epoch_int
         if not self.train_bar_started:
             self.progress.start()
             self.train_bar_started = True
