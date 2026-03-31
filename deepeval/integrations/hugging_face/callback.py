@@ -75,8 +75,20 @@ try:
             Returns:
                 Dict[str, List[float]]: Metric scores for each test case.
             """
+            valid_test_cases = [
+                tc for tc in self.evaluation_dataset.test_cases
+                if tc.actual_output and tc.actual_output.strip()
+            ]
+            skipped = len(self.evaluation_dataset.test_cases) - len(valid_test_cases)
+            if skipped:
+                print(
+                    f"[DeepEval] Warning: {skipped} test case(s) skipped "
+                    f"due to empty actual_output."
+                )
+            if not valid_test_cases:
+                return {}
             test_results = execute_test_cases(
-                test_cases=self.evaluation_dataset.test_cases,
+                test_cases=valid_test_cases,
                 metrics=self.metrics,
             )
             scores = {}
