@@ -45,9 +45,24 @@ def generate_test_cases(
 
     goldens = evaluation_dataset.goldens
     for golden in goldens:
-        prompt = f"""{'CONTEXT: ' + str("; ".join(golden.context)) if golden.context else ''}
-                QUESTION: {golden.input}
-                ANSWER:"""
+        context_prefix = (
+            "Context: " + "; ".join(golden.context) + "\n\n"
+            if golden.context
+            else ""
+        )
+        user_message = context_prefix + golden.input
+
+        # Use the tokenizer's chat template if available so the model sees
+        # the exact format it was trained on (e.g. ChatML <|im_start|>/<|im_end|>).
+        # Fall back to a plain prompt for base models without a chat template.
+        if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+            prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": user_message}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        else:
+            prompt = f"{user_message}\nAnswer:"
 
         tokenized = tokenizer(
             prompt,
