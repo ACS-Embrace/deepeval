@@ -59,6 +59,15 @@ def generate_test_cases(
         
         outputs = model.generate(**tokenized_output, **generator_args)
         decoded_output = tokenizer.decode(outputs[0][tokenized_output["input_ids"].shape[-1]:], skip_special_tokens=True)
+
+        if not decoded_output or not decoded_output.strip():
+            raw_response = tokenizer.decode(outputs[0], skip_special_tokens=False)
+            print(
+                f"\n[DeepEval] Warning: empty output generated.\n"
+                f"  Prompt:   {repr(prompt)}\n"
+                f"  Response: {repr(raw_response)}\n"
+            )
+
         golden.actual_output = decoded_output
         del tokenized_output, outputs
     test_cases = convert_goldens_to_test_cases(
