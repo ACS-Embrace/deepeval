@@ -360,11 +360,10 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
         """
         super().on_epoch_end(args, state, control, **kwargs)
 
-        scores = self._pending_scores
-        # Clear immediately so stale scores are never replayed on a future epoch.
-        self._pending_scores = None
-
-        if not scores:
+        # Read but do NOT clear _pending_scores here — on_log still needs it
+        # to update the Rich table.  The reset at the top of the next epoch's
+        # on_epoch_end prevents stale replay.
+        if not self._pending_scores:
             return
 
         try:
@@ -379,11 +378,11 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
 
             log_payload = {
                 f"{self._wandb_prefix}{k}": v
-                for k, v in scores.items()
+                for k, v in self._pending_scores.items()
             }
-            # Use epoch as the wandb step so deepeval metrics align with
-            # the rest of the training curves.
-            wandb.log(log_payload, step=int(state.epoch))
+            # Use global_step so deepeval metrics are monotonically increasing
+            # and align with training metrics on the same wandb chart.
+            wandb.log(log_payload, step=state.global_step)
 
         except Exception as e:
             print(
