@@ -56,11 +56,30 @@ def generate_test_cases(
         # the exact format it was trained on (e.g. ChatML <|im_start|>/<|im_end|>).
         # Fall back to a plain prompt for base models without a chat template.
         if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-            prompt = tokenizer.apply_chat_template(
-                [{"role": "user", "content": user_message}],
-                tokenize=False,
-                add_generation_prompt=True,
+            # Check whether this template uses <think> blocks (e.g. Qwen3, DeepSeek-R1).
+            # If so, prefill the assistant turn with an empty think block so the model
+            # skips chain-of-thought and generates only the answer.
+            uses_think_tags = (
+                tokenizer.chat_template is not None
+                and "<think>" in tokenizer.chat_template
             )
+            if uses_think_tags:
+                messages = [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": "Answer:<think>\n\n</think>"},
+                ]
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=False,
+                    continue_final_message=True,
+                )
+            else:
+                prompt = tokenizer.apply_chat_template(
+                    [{"role": "user", "content": user_message}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
         else:
             prompt = f"{user_message}\nAnswer:"
 
