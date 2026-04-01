@@ -57,23 +57,35 @@ def generate_test_cases(
         # Fall back to a plain prompt for base models without a chat template.
         if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
             # Check whether this template uses <think> blocks (e.g. Qwen3, DeepSeek-R1).
-            # If so, prefill the assistant turn with an empty think block so the model
-            # skips chain-of-thought and generates only the answer.
+            # If so, append an empty think block after the assistant turn opener so the
+            # model skips chain-of-thought and generates only the answer.
             uses_think_tags = (
                 tokenizer.chat_template is not None
                 and "<think>" in tokenizer.chat_template
             )
             if uses_think_tags:
-                messages = [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": "Answer:<think>\n\n</think>"},
-                ]
-                prompt = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=False,
-                    continue_final_message=True,
-                )
+                # For reasoning models (e.g. Qwen3, DeepSeek-R1), add_generation_prompt
+                # already appends <think>\n to the assistant opener.  Pass
+                # enable_thinking=False to get a clean opener, then manually append
+                # the empty think block so the model skips reasoning and answers directly.
+                try:
+                    prompt = tokenizer.apply_chat_template(
+                        [{"role": "user", "content": user_message}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                        enable_thinking=False,
+                    )
+                except TypeError:
+                    # Template doesn't support enable_thinking — fall back and
+                    # strip a trailing <think>\n if the template added one.
+                    prompt = tokenizer.apply_chat_template(
+                        [{"role": "user", "content": user_message}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    if prompt.endswith("<think>\n"):
+                        prompt = prompt[: -len("<think>\n")]
+                prompt = prompt + "Answer:<think>\n\n</think>"
             else:
                 prompt = tokenizer.apply_chat_template(
                     [{"role": "user", "content": user_message}],
