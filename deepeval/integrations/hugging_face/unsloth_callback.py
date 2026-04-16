@@ -207,6 +207,72 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
         """
         return self.show_table
 
+    def _run_inference_evaluation(self, state: TrainerState) -> Optional[Dict]:
+        """
+        Shared helper: switch to inference mode, generate outputs, evaluate,
+        restore training mode.  Returns the aggregated scores dict or None.
+        """
+        model = self.trainer.model
+        self._owns_inference = False
+        scores = None
+        try:
+            self._activate_inference(model)
+
+            self.rich_manager.change_spinner_text(
+                self.task_descriptions["generating"]
+            )
+            test_cases = generate_test_cases(
+                model,
+                self.trainer.tokenizer,
+                self.tokenizer_args,
+                self.evaluation_dataset,
+                self.generator_args,
+            )
+            self.evaluation_dataset.test_cases = test_cases
+
+            self.rich_manager.change_spinner_text(
+                self.task_descriptions["evaluate"]
+            )
+            scores = self._calculate_metric_scores()
+        finally:
+            try:
+                self._deactivate_inference(model)
+            except Exception as restore_e:
+                print(
+                    f"[DeepEval] Warning: failed to restore training mode: {restore_e}"
+                )
+        return scores
+
+    def on_train_begin(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        """
+        Run a baseline evaluation before any training steps so we have an
+        epoch-0 reference point in both the Rich table and W&B.
+        """
+        super().on_train_begin(args, state, control, **kwargs)
+
+        if not self._should_evaluate:
+            return
+
+        try:
+            baseline_scores = self._run_inference_evaluation(state)
+            if baseline_scores:
+                self.rich_manager.contribute_epoch_data(0, baseline_scores)
+                if self.show_table:
+                    columns = self._generate_table()
+                    self.rich_manager.update(columns)
+        except Exception as e:
+            print(
+                f"[DeepEval] Warning: baseline evaluation failed and was skipped: {e}"
+            )
+
+        self.rich_manager.change_spinner_text(self.task_descriptions["training"])
+
     def on_epoch_end(
         self,
         args: TrainingArguments,
@@ -237,46 +303,16 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
                 return
 
             # Reset so a failed epoch never re-logs stale scores from
-            # a previous epoch (matches the docstring guarantee).
+            # a previous epoch.
             self._pending_scores = None
 
-            model = self.trainer.model
-            self._owns_inference = False
-
             try:
-                self._activate_inference(model)
-
-                self.rich_manager.change_spinner_text(
-                    self.task_descriptions["generating"]
-                )
-                test_cases = generate_test_cases(
-                    model,
-                    self.trainer.tokenizer,
-                    self.tokenizer_args,
-                    self.evaluation_dataset,
-                    self.generator_args,
-                )
-                self.evaluation_dataset.test_cases = test_cases
-
-                self.rich_manager.change_spinner_text(
-                    self.task_descriptions["evaluate"]
-                )
-                self._pending_scores = self._calculate_metric_scores()
-
+                self._pending_scores = self._run_inference_evaluation(state)
             except Exception as inner_e:
                 print(
                     f"[DeepEval] Warning: on_epoch_end inference/evaluation "
                     f"failed and was skipped: {inner_e}"
                 )
-            finally:
-                # Always restore training mode, even after a failure.
-                try:
-                    self._deactivate_inference(model)
-                except Exception as restore_e:
-                    print(
-                        f"[DeepEval] Warning: failed to restore training mode "
-                        f"after on_epoch_end: {restore_e}"
-                    )
 
         except Exception as e:
             print(
@@ -347,6 +383,39 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
         """Always evaluate so wandb metrics are logged regardless of show_table."""
         return True
 
+    def on_train_begin(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        """
+        Run baseline evaluation (via parent) then log the results to W&B at
+        step=0.  It is safe to use an explicit step here because the Trainer
+        hasn't started logging yet, so there is no monotonicity race.
+        """
+        super().on_train_begin(args, state, control, **kwargs)
+
+        baseline = self.rich_manager.get_epoch_data(0)
+        if not baseline:
+            return
+
+        try:
+            import wandb
+
+            if wandb.run is None:
+                return
+
+            log_payload = {
+                f"{self._wandb_prefix}{k}": v for k, v in baseline.items()
+            }
+            wandb.log(log_payload, step=0)
+        except Exception as e:
+            print(
+                f"[DeepEval] Warning: baseline wandb logging failed and was skipped: {e}"
+            )
+
     def on_epoch_end(
         self,
         args: TrainingArguments,
@@ -380,9 +449,14 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
                 f"{self._wandb_prefix}{k}": v
                 for k, v in self._pending_scores.items()
             }
-            # Use global_step so deepeval metrics are monotonically increasing
-            # and align with training metrics on the same wandb chart.
-            wandb.log(log_payload, step=state.global_step)
+            # Do NOT pass an explicit step.  Evaluation is slow — by the time
+            # wandb.log() is called, the Trainer's WandbCallback has already
+            # advanced the step counter past state.global_step, causing W&B to
+            # silently drop any log with a step <= its current step.
+            # Letting W&B auto-increment avoids the race at the cost of a small
+            # step offset (the deepeval point appears at the step when eval
+            # finished, not when it started).
+            wandb.log(log_payload)
 
         except Exception as e:
             print(
