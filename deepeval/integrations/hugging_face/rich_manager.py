@@ -142,6 +142,10 @@ class RichManager:
         """Return per-epoch rows sorted by epoch, merging all callbacks' data."""
         return [self._epoch_data[k] for k in sorted(self._epoch_data)]
 
+    def get_epoch_data(self, epoch: int) -> dict:
+        """Return the merged data dict for a specific epoch, or {} if not present."""
+        return self._epoch_data.get(epoch, {})
+
     def advance_progress(self, epoch: float) -> None:
         """Advance the progress tracker, at most once per epoch."""
         epoch_int = int(epoch)
