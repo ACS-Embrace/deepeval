@@ -154,6 +154,8 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
         generator_args: Dict = None,
         barrier: Optional[UnslothBarrier] = None,
         rich_manager: Optional[RichManager] = None,
+        timeout_s: int = 0,
+        eval_every_steps: Optional[int] = None,
     ) -> None:
         super().__init__(
             trainer=trainer,
@@ -167,6 +169,10 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
         )
         self._barrier = barrier
         self._owns_inference: bool = False  # only used when barrier is None
+        self._timeout_s: int = timeout_s
+        self._eval_every_steps: Optional[int] = eval_every_steps
+        self._last_step_eval: int = -1
+        self.last_test_case_results: list = []
 
         if _FastLanguageModel is None and barrier is None:
             warnings.warn(
@@ -233,7 +239,28 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
             self.rich_manager.change_spinner_text(
                 self.task_descriptions["evaluate"]
             )
+             # Prevent indefinite hang on slow/dropped OpenRouter connections
+            if self._timeout_s > 0:
+                try:
+                    import litellm
+                    litellm.request_timeout = self._timeout_s
+                except Exception:
+                    pass
+
             scores = self._calculate_metric_scores()
+
+            # Build per-sample results for downstream savers
+            self.last_test_case_results = [
+                {
+                    "input":    tc.input,
+                    "expected": tc.expected_output,
+                    "actual":   tc.actual_output,
+                    "score":    tc.metrics_data[0].score if tc.metrics_data else None,
+                    "passed":   tc.metrics_data[0].success if tc.metrics_data else None,
+                }
+                for tc in (self.evaluation_dataset.test_cases or [])
+                if tc.actual_output
+            ]
         finally:
             try:
                 self._deactivate_inference(model)
@@ -319,6 +346,33 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
                 f"[DeepEval] Warning: on_epoch_end failed and was skipped: {e}"
             )
 
+    def on_step_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        if self._eval_every_steps is None:
+            return control
+        step = state.global_step
+        if step == 0 or step == self._last_step_eval:
+            return control
+        if step % self._eval_every_steps != 0:
+            return control
+        self._last_step_eval = step
+        try:
+            scores = self._run_inference_evaluation(state)
+            if scores:
+                self._log_step_scores(scores, step)
+        except Exception as e:
+            print(f"[DeepEval] Warning: on_step_end eval failed: {e}")
+        return control
+
+    def _log_step_scores(self, scores: Dict, step: int) -> None:
+        """Log step-based scores. Subclasses override to add W&B logging."""
+        pass
+
 
 class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
     """
@@ -355,6 +409,8 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
         barrier: Optional[UnslothBarrier] = None,
         rich_manager: Optional[RichManager] = None,
         wandb_prefix: str = "deepeval/",
+        timeout_s: int = 0,
+        eval_every_steps: Optional[int] = None,
     ) -> None:
         super().__init__(
             trainer=trainer,
@@ -366,6 +422,8 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
             generator_args=generator_args,
             barrier=barrier,
             rich_manager=rich_manager,
+            timeout_s=timeout_s,
+            eval_every_steps=eval_every_steps,
         )
         self._wandb_prefix = wandb_prefix
 
@@ -462,3 +520,15 @@ class DeepEvalUnslothWandbCallback(DeepEvalUnslothCallback):
             print(
                 f"[DeepEval] Warning: wandb logging failed and was skipped: {e}"
             )
+
+    def _log_step_scores(self, scores: Dict, step: int) -> None:
+        try:
+            import wandb
+            if wandb.run is None:
+                return
+            wandb.log(
+                {f"{self._wandb_prefix}{k}": v for k, v in scores.items()},
+                step=step,
+            )
+        except Exception as e:
+            print(f"[DeepEval] Warning: step W&B logging failed: {e}")
