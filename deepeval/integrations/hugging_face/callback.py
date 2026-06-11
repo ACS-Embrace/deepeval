@@ -91,7 +91,11 @@ try:
             scores = {}
             eval_failures = 0
             self._last_test_results = []  # accumulated for per-sample result savers
-            for tc in valid_test_cases:
+            import time as _time
+            _total = len(valid_test_cases)
+            _t0 = _time.time()
+            for _i, tc in enumerate(valid_test_cases, 1):
+                _ts = _time.time()
                 try:
                     test_results = execute_test_cases(
                         test_cases=[tc],
@@ -102,14 +106,21 @@ try:
                         ),
                     )
                     self._last_test_results.extend(test_results)
+                    _sample_score = None
                     for test_result in test_results:
                         for metric in (test_result.metrics_data or []):
                             if metric.score is None:
                                 continue
                             scores.setdefault(str(metric.name), []).append(metric.score)
+                            _sample_score = metric.score
+                    _dt = _time.time() - _ts
+                    print(f"[DeepEval] {_i}/{_total} scored={_sample_score} ({_dt:.1f}s)", flush=True)
                 except Exception as e:
                     eval_failures += 1
-                    print(f"[DeepEval] Warning: test case evaluation failed and was skipped: {e}")
+                    _dt = _time.time() - _ts
+                    print(f"[DeepEval] {_i}/{_total} FAILED ({_dt:.1f}s): {e}", flush=True)
+            _elapsed = _time.time() - _t0
+            print(f"[DeepEval] Scoring done: {_total} cases in {_elapsed:.1f}s ({eval_failures} failed)", flush=True)
 
             if eval_failures:
                 print(

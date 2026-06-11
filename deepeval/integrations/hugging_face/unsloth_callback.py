@@ -227,6 +227,10 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
             self.rich_manager.change_spinner_text(
                 self.task_descriptions["generating"]
             )
+            import time as _time
+            _n_goldens = len(self.evaluation_dataset.goldens or [])
+            print(f'[DeepEval] Generating model outputs for {_n_goldens} samples ...', flush=True)
+            _gt0 = _time.time()
             test_cases = generate_test_cases(
                 model,
                 self.trainer.tokenizer,
@@ -234,19 +238,22 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
                 self.evaluation_dataset,
                 self.generator_args,
             )
+            print(f'[DeepEval] Generation done: {len(test_cases)} test cases in {_time.time() - _gt0:.1f}s', flush=True)
             self.evaluation_dataset.test_cases = test_cases
 
             self.rich_manager.change_spinner_text(
                 self.task_descriptions["evaluate"]
             )
-             # Prevent indefinite hang on slow/dropped OpenRouter connections
+            # Prevent indefinite hang on slow/dropped OpenRouter connections.
+            # Note: deepeval's GPTModel reads timeout from this env var, NOT from
+            # litellm.request_timeout. Also cap retries to fail fast.
+            import os as _os
             if self._timeout_s > 0:
-                try:
-                    import litellm
-                    litellm.request_timeout = self._timeout_s
-                except Exception:
-                    pass
+                _os.environ['DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS'] = str(self._timeout_s)
+            _os.environ.setdefault('DEEPEVAL_RETRY_MAX_ATTEMPTS', '1')
 
+            n_total = len(self.evaluation_dataset.test_cases or [])
+            print(f'[DeepEval] Scoring {n_total} test cases via {self.metrics[0].evaluation_model if self.metrics else "model"} ...', flush=True)
             scores = self._calculate_metric_scores()
 
             # Build per-sample results from _last_test_results (set by _calculate_metric_scores)
