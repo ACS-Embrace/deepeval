@@ -250,17 +250,18 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
             scores = self._calculate_metric_scores()
 
             # Build per-sample results for downstream savers
-            self.last_test_case_results = [
-                {
+            self.last_test_case_results = []
+            for tc in (self.evaluation_dataset.test_cases or []):
+                if not tc.actual_output:
+                    continue
+                _md = getattr(tc, 'metrics_data', None)
+                self.last_test_case_results.append({
                     "input":    tc.input,
                     "expected": tc.expected_output,
                     "actual":   tc.actual_output,
-                    "score":    tc.metrics_data[0].score if tc.metrics_data else None,
-                    "passed":   tc.metrics_data[0].success if tc.metrics_data else None,
-                }
-                for tc in (self.evaluation_dataset.test_cases or [])
-                if tc.actual_output
-            ]
+                    "score":    _md[0].score if _md else None,
+                    "passed":   _md[0].success if _md else None,
+                })
         finally:
             try:
                 self._deactivate_inference(model)
