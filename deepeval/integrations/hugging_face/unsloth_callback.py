@@ -249,7 +249,7 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
             # litellm.request_timeout. Also cap retries to fail fast.
             import os as _os
             if self._timeout_s > 0:
-                _os.environ['DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS'] = str(self._timeout_s)
+                _os.environ['DEEPEVAL_PER_ATTEMPT_TIMEOUT_SECONDS_OVERRIDE'] = str(self._timeout_s)
             _os.environ.setdefault('DEEPEVAL_RETRY_MAX_ATTEMPTS', '1')
 
             n_total = len(self.evaluation_dataset.test_cases or [])
@@ -274,6 +274,20 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
                 print(
                     f"[DeepEval] Warning: failed to restore training mode: {restore_e}"
                 )
+            # Force VRAM cleanup so the next training step can allocate buffers.
+            # Without this, generation KV-cache + activations can keep memory
+            # reserved, pushing the next forward pass into OOM territory and
+            # making training appear to hang.
+            try:
+                import gc as _gc
+                import torch as _torch
+                _gc.collect()
+                if _torch.cuda.is_available():
+                    _torch.cuda.empty_cache()
+                    _torch.cuda.synchronize()
+                print("[DeepEval] Returning to training mode (VRAM cleaned)", flush=True)
+            except Exception as cleanup_e:
+                print(f"[DeepEval] Warning: VRAM cleanup failed: {cleanup_e}", flush=True)
         return scores
 
     def on_train_begin(
