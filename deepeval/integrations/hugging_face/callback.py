@@ -90,6 +90,7 @@ try:
             # of every other test case.
             scores = {}
             eval_failures = 0
+            self._last_test_results = []  # accumulated for per-sample result savers
             for tc in valid_test_cases:
                 try:
                     test_results = execute_test_cases(
@@ -100,8 +101,9 @@ try:
                             print_results=False,
                         ),
                     )
+                    self._last_test_results.extend(test_results)
                     for test_result in test_results:
-                        for metric in test_result.metrics_data:
+                        for metric in (test_result.metrics_data or []):
                             if metric.score is None:
                                 continue
                             scores.setdefault(str(metric.name), []).append(metric.score)

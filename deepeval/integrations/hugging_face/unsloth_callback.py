@@ -249,16 +249,14 @@ class DeepEvalUnslothCallback(DeepEvalHuggingFaceCallback):
 
             scores = self._calculate_metric_scores()
 
-            # Build per-sample results for downstream savers
+            # Build per-sample results from _last_test_results (set by _calculate_metric_scores)
             self.last_test_case_results = []
-            for tc in (self.evaluation_dataset.test_cases or []):
-                if not tc.actual_output:
-                    continue
-                _md = getattr(tc, 'metrics_data', None)
+            for tr in (getattr(self, '_last_test_results', None) or []):
+                _md = tr.metrics_data or []
                 self.last_test_case_results.append({
-                    "input":    tc.input,
-                    "expected": tc.expected_output,
-                    "actual":   tc.actual_output,
+                    "input":    tr.input,
+                    "expected": tr.expected_output,
+                    "actual":   tr.actual_output,
                     "score":    _md[0].score if _md else None,
                     "passed":   _md[0].success if _md else None,
                 })
